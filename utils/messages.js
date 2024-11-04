@@ -8,6 +8,9 @@ const MESSAGES = {
   INTERNAL_ERROR: "An internal server error occurred",
   VALID_OTP: "OTP Verification Successfull",
   PASSWORD_UPDATED: "Password has been successfully updated.",
+  EMAIL_MISMATCH: "Email does not match the token.",
+  TOKEN_EXPIRED: "Token has expired.",
+  INVALID_TOKEN: "Invalid token.",
 };
 
 module.exports = MESSAGES;

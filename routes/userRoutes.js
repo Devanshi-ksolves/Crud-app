@@ -2,9 +2,11 @@ const express = require("express");
 const {
   register,
   login,
-  getUser,
   updateUser,
+  getUser,
   deleteUser,
+  getAllUsers,
+  impersonateUser,
 } = require("../controllers/userController");
 const authMiddleware = require("../middlewares/auth");
 const {
@@ -12,8 +14,8 @@ const {
   authorizeAdmin,
 } = require("../middlewares/authorization");
 const { forgetPassword } = require("../controllers/forgetPasswordController");
-const { validateOtp } = require("../controllers/updatePasswordController");
-
+const { validateOtp } = require("../controllers/otpValidationController");
+const { resetPassword } = require("../controllers/updatePasswordController");
 const router = express.Router();
 
 router.post("/register", register);
@@ -25,5 +27,13 @@ router.delete("/:id", authMiddleware, authorizeAdmin, deleteUser);
 
 router.post("/forgot-password", forgetPassword);
 router.post("/validate-otp", validateOtp);
+router.post("/reset-password", resetPassword);
+router.get("/", authMiddleware, authorizeAdmin, getAllUsers);
+router.post(
+  "/impersonate/:id",
+  authMiddleware,
+  authorizeAdmin,
+  impersonateUser
+);
 
 module.exports = router;
