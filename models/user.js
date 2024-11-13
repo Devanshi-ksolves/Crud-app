@@ -9,9 +9,6 @@ module.exports = (sequelize, DataTypes) => {
      * This method is not a part of Sequelize lifecycle.
      * The `models/index` file will call this method automatically.
      */
-    static associate(models) {
-      // define association here
-    }
 
     static hashPassword(password) {
       return bcrypt.hashSync(password, bcrypt.genSaltSync(10));
@@ -33,6 +30,9 @@ module.exports = (sequelize, DataTypes) => {
       role: {
         type: DataTypes.STRING,
         defaultValue: "user",
+        validate: {
+          isIn: [["user", "admin", "super_admin"]],
+        },
       },
       otp: {
         type: DataTypes.STRING,
@@ -49,6 +49,10 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
       },
       document: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      privileges: {
         type: DataTypes.STRING,
         allowNull: true,
       },

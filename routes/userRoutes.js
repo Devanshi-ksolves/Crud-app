@@ -7,6 +7,7 @@ const {
   deleteUser,
   getAllUsers,
   impersonateUser,
+  uploadFiles,
 } = require("../controllers/userController");
 const authMiddleware = require("../middlewares/auth");
 const {
@@ -16,6 +17,7 @@ const {
 const { forgetPassword } = require("../controllers/forgetPasswordController");
 const { validateOtp } = require("../controllers/otpValidationController");
 const { resetPassword } = require("../controllers/updatePasswordController");
+const upload = require("../middlewares/upload");
 const router = express.Router();
 
 router.post("/register", register);
@@ -34,6 +36,14 @@ router.post(
   authMiddleware,
   authorizeAdmin,
   impersonateUser
+);
+router.post(
+  "/upload-files",
+  upload.fields([
+    { name: "document", maxCount: 1 },
+    { name: "profilePicture", maxCount: 1 },
+  ]),
+  uploadFiles
 );
 
 module.exports = router;
