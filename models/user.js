@@ -4,11 +4,13 @@ const bcrypt = require("bcryptjs");
 
 module.exports = (sequelize, DataTypes) => {
   class User extends Model {
-    /**
-     * Helper method for defining associations.
-     * This method is not a part of Sequelize lifecycle.
-     * The `models/index` file will call this method automatically.
-     */
+    static associate(models) {
+      User.hasMany(models.Document, {
+        foreignKey: "userId",
+        as: "documents",
+        onDelete: "CASCADE",
+      });
+    }
 
     static hashPassword(password) {
       return bcrypt.hashSync(password, bcrypt.genSaltSync(10));
@@ -18,9 +20,13 @@ module.exports = (sequelize, DataTypes) => {
       return bcrypt.compareSync(password, this.password);
     }
   }
+
   User.init(
     {
-      name: DataTypes.STRING,
+      name: {
+        type: DataTypes.STRING,
+        allowNull: false,
+      },
       email: {
         type: DataTypes.STRING,
         allowNull: false,
@@ -60,6 +66,7 @@ module.exports = (sequelize, DataTypes) => {
     {
       sequelize,
       modelName: "User",
+      timestamps: true,
     }
   );
   User.beforeCreate((user) => {

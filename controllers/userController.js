@@ -1,20 +1,19 @@
-const { User, Op } = require("../models");
+const { User, Document } = require("../models");
+const { Op } = require("sequelize");
+
 const jwt = require("jsonwebtoken");
 const path = require("path");
+const { sendEmail } = require("../services/emailService");
 
 const parsePrivileges = (role, privilegesString) => {
-  const allPrivileges = [
-    "Assign Roles",
-    "Delete User",
-    "Impersonate User",
-  ];
+  const allPrivileges = ["Assign Roles", "Delete User", "Impersonate User"];
 
   if (role === "super_admin") {
-    return allPrivileges; 
+    return allPrivileges;
   }
 
   if (Array.isArray(privilegesString)) {
-    return privilegesString; 
+    return privilegesString;
   }
 
   if (typeof privilegesString === "string") {
@@ -29,11 +28,6 @@ const parsePrivileges = (role, privilegesString) => {
 
 exports.register = async (req, res) => {
   try {
-    const { privileges = [] } = req.body; 
-    req.body.privileges = Array.isArray(privileges)
-      ? privileges
-      : privileges.split(",").map((priv) => priv.trim()); 
-
     const user = await User.create(req.body);
     res.status(201).json({ message: "User created successfully", user });
   } catch (err) {
@@ -78,14 +72,14 @@ exports.getUser = async (req, res) => {
 
     const privileges = parsePrivileges(user.role, user.privileges);
 
-    const canImpersonate = user.role === "super_admin" || user.role === "admin"; // Example condition
+    const canImpersonate = user.role === "super_admin" || user.role === "admin";
 
     res.json({
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
-      privileges, 
+      privileges,
       canImpersonate,
     });
   } catch (err) {
@@ -112,6 +106,7 @@ exports.updateUser = async (req, res) => {
     }
     if (
       req.user.role !== "super_admin" &&
+      req.user.id !== user.id &&
       !parsePrivileges(req.user.role, req.user.privileges).includes(
         "Assign Roles"
       )
@@ -175,7 +170,7 @@ exports.deleteUser = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   const { search = "", page = 1, pageSize = 10 } = req.query;
 
-  const currentPage = parseInt(page, 10) || 1;
+  const currentPage = search ? 1 : parseInt(page, 10) || 1;
   const limit = parseInt(pageSize, 10) || 10;
   const offset = (currentPage - 1) * limit;
 
@@ -193,7 +188,7 @@ exports.getAllUsers = async (req, res) => {
       where: searchFilter,
       limit: limit,
       offset: offset,
-      order: [["id", "ASC"]],
+      order: [["name", "ASC"]],
     });
 
     const totalUsers = await User.count({
@@ -264,19 +259,227 @@ exports.impersonateUser = async (req, res) => {
   }
 };
 
-exports.uploadFiles = (req, res) => {
+exports.uploadFiles = async (req, res) => {
   if (req.files) {
-    const document = req.files.document ? req.files.document[0].path : null;
     const profilePicture = req.files.profilePicture
       ? req.files.profilePicture[0].path
       : null;
+    const document = req.files.document ? req.files.document[0].path : null;
 
-    res.status(200).json({
-      message: "Files uploaded successfully",
-      documentPath: document,
-      profilePicturePath: profilePicture,
-    });
+    const userId = req.user.id;
+    if (!profilePicture) {
+      return res.status(400).json({ message: "No profile picture uploaded" });
+    }
+    if (!document) {
+      return res.status(400).json({ message: "No document uploaded" });
+    }
+
+    try {
+      const user = await User.findByPk(userId);
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      await user.update({
+        profilePicture: profilePicture,
+        document: document,
+      });
+
+      res.status(200).json({
+        message: "Files uploaded successfully",
+        profilePicture: profilePicture,
+        document: document,
+      });
+    } catch (err) {
+      console.error("Error updating profile picture and document path", err);
+      res.status(500).json({
+        message:
+          "Error updating profile picture and document path in the database",
+        error: err.message,
+      });
+    }
   } else {
     res.status(400).json({ message: "No files uploaded" });
+  }
+};
+
+exports.getUsersList = async (req, res) => {
+  const { page = 1, pageSize = 10 } = req.query;
+
+  const currentPage = parseInt(page, 10) || 1;
+  const limit = parseInt(pageSize, 10) || 10;
+  const offset = (currentPage - 1) * limit;
+
+  try {
+    const users = await User.findAll({
+      where: { role: "user" },
+      limit: limit,
+      offset: offset,
+      order: [["id", "ASC"]],
+    });
+
+    const totalUsers = await User.count({
+      where: { role: "user" },
+    });
+
+    const totalPages = Math.ceil(totalUsers / limit);
+
+    res.json({
+      users,
+      totalPages: totalPages,
+      currentPage: currentPage,
+      totalUsers: totalUsers,
+    });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res
+      .status(500)
+      .json({ message: "Error fetching users", error: error.message });
+  }
+};
+
+exports.requestDocument = async (req, res) => {
+  const { userId, documentTypes } = req.body;
+
+  try {
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    for (const type of documentTypes) {
+      await Document.create({ userId, documentType: type });
+    }
+
+    const documentList = documentTypes.map((type) => `- ${type}`).join("\n");
+    const emailContent = `
+Dear ${user.name},
+
+We are reaching out to inform you that the following documents are required for processing your request:
+
+${documentList}
+
+Please upload these documents at your earliest convenience. Your prompt response will help us to process your request smoothly and efficiently.
+
+Thank you for your cooperation.
+
+Best regards,
+Curd_App Team
+`;
+
+    await sendEmail(user.email, "Document Request", emailContent);
+
+    res.status(200).json({ message: "Document request sent to user." });
+  } catch (error) {
+    console.error("Error requesting documents:", error);
+    res.status(500).json({ message: "Error requesting documents." });
+  }
+};
+
+exports.viewDocuments = async (req, res) => {
+  const userId = req.params.id;
+
+  try {
+    const documents = await Document.findAll({ where: { userId } });
+    res.json(documents);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching documents." });
+  }
+};
+
+exports.acceptRejectDocument = async (req, res) => {
+  const { documentId, status } = req.body;
+
+  try {
+    const document = await Document.findByPk(documentId);
+    if (!document)
+      return res.status(404).json({ message: "Document not found" });
+
+    document.status = status;
+    await document.save();
+
+    if (status === "rejected") {
+      const user = await User.findByPk(document.userId);
+      sendEmail(
+        user.email,
+        "Document Rejection",
+        "Your document was rejected. Please re-upload."
+      );
+    }
+
+    res.status(200).json({ message: `Document ${status}` });
+  } catch (error) {
+    res.status(500).json({ message: "Error updating document status." });
+  }
+};
+
+exports.uploadDocument = async (req, res) => {
+  if (req.files) {
+    const frontImage = req.files.frontImage
+      ? req.files.frontImage[0].path
+      : null;
+    const backImage = req.files.backImage ? req.files.backImage[0].path : null;
+
+    try {
+      const { documentId, userId } = req.body;
+
+      const document = await Document.findOne({
+        where: { id: documentId, userId },
+      });
+
+      if (!document) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+
+      document.uploaded = true;
+      document.frontImage = frontImage;
+      document.backImage = backImage;
+      await document.save();
+
+      res.status(200).json({
+        message: "Files uploaded successfully",
+        frontImage: frontImage,
+        backImage: backImage,
+        documentId: document.id,
+      });
+    } catch (err) {
+      res.status(500).json({
+        message: "Error updating document paths in the database",
+        error: err.message,
+      });
+    }
+  } else {
+    res.status(400).json({ message: "No files uploaded" });
+  }
+};
+
+exports.getRequestedDocuments = async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const latestDocument = await Document.findOne({
+      where: { userId },
+      order: [["createdAt", "DESC"]],
+      attributes: ["createdAt"],
+    });
+
+    if (!latestDocument) {
+      return res
+        .status(404)
+        .json({ message: "No documents found for this user." });
+    }
+
+    const latestTimestamp = latestDocument.createdAt;
+
+    const recentDocuments = await Document.findAll({
+      where: { userId, createdAt: latestTimestamp },
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.status(200).json(recentDocuments);
+  } catch (error) {
+    console.error(
+      "Error fetching the latest requested documents:",
+      error.message
+    );
+    res.status(500).json({ message: "Error fetching documents." });
   }
 };

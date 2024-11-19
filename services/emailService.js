@@ -32,6 +32,29 @@ const sendOtpEmail = async (email, otp) => {
   }
 };
 
+/**
+ *
+ * @param {string} to - The recipient's email.
+ * @param {string} subject - Email's Subject
+ * @param {string} text - Email's text
+ */
+const sendEmail = async (to, subject, text) => {
+  const mailOptions = {
+    from: '"Curd_App" <devanshi.pathak@ksolves.com>',
+    to,
+    subject,
+    text,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log("Email sent successfully");
+  } catch (error) {
+    console.error("Error sending email:", error);
+  }
+};
+
 module.exports = {
   sendOtpEmail,
+  sendEmail,
 };

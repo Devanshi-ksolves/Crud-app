@@ -8,6 +8,12 @@ const {
   getAllUsers,
   impersonateUser,
   uploadFiles,
+  getUsersList,
+  requestDocument,
+  viewDocuments,
+  acceptRejectDocument,
+  uploadDocument,
+  getRequestedDocuments,
 } = require("../controllers/userController");
 const authMiddleware = require("../middlewares/auth");
 const {
@@ -19,9 +25,11 @@ const { validateOtp } = require("../controllers/otpValidationController");
 const { resetPassword } = require("../controllers/updatePasswordController");
 const upload = require("../middlewares/upload");
 const router = express.Router();
+router.get("/requested-documents/:userId", getRequestedDocuments);
 
 router.post("/register", register);
 router.post("/login", login);
+router.get("/users", authMiddleware, authorizeAdmin, getUsersList);
 
 router.get("/:id", authMiddleware, authorizeUserOrAdmin, getUser);
 router.put("/:id", authMiddleware, authorizeUserOrAdmin, updateUser);
@@ -39,11 +47,36 @@ router.post(
 );
 router.post(
   "/upload-files",
+  authMiddleware,
   upload.fields([
     { name: "document", maxCount: 1 },
-    { name: "profilePicture", maxCount: 1 },
+    { name: "profilePicture", maxCount: 2 },
   ]),
   uploadFiles
+);
+
+router.post(
+  "/request-document",
+  authMiddleware,
+  authorizeUserOrAdmin,
+  requestDocument
+);
+
+router.get("/view-documents/:id", viewDocuments);
+router.post(
+  "/accept-reject-document",
+  authMiddleware,
+  authorizeUserOrAdmin,
+  acceptRejectDocument
+);
+router.post(
+  "/upload-document",
+  authMiddleware,
+  upload.fields([
+    { name: "frontImage", maxCount: 1 },
+    { name: "backImage", maxCount: 1 },
+  ]),
+  uploadDocument
 );
 
 module.exports = router;
