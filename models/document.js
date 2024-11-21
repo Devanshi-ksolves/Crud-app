@@ -48,6 +48,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.BOOLEAN,
         defaultValue: false,
       },
+      frontImage: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      backImage: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
     },
     {
       sequelize,

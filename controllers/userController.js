@@ -1,6 +1,6 @@
 const { User, Document } = require("../models");
 const { Op } = require("sequelize");
-
+const { Sequelize } = require("sequelize");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const { sendEmail } = require("../services/emailService");
@@ -391,24 +391,42 @@ exports.acceptRejectDocument = async (req, res) => {
 
   try {
     const document = await Document.findByPk(documentId);
-    if (!document)
+    if (!document) {
       return res.status(404).json({ message: "Document not found" });
+    }
 
     document.status = status;
     await document.save();
 
     if (status === "rejected") {
+      document.uploaded = false;
+      await document.save();
+
       const user = await User.findByPk(document.userId);
-      sendEmail(
-        user.email,
-        "Document Rejection",
-        "Your document was rejected. Please re-upload."
-      );
+      if (user) {
+        const documentName = document.documentType;
+        const subject = "Document Rejection Notification";
+        const message = `
+          Dear ${user.name},
+
+          We regret to inform you that the document titled "${documentName}" has been rejected due to non-compliance with our submission guidelines. 
+          
+          Please review the document and make the necessary corrections before re-uploading it. 
+
+          If you have any questions or need further assistance, feel free to contact our support team.
+
+          Best regards,
+          Crud App Support Team
+        `;
+
+        sendEmail(user.email, subject, message);
+      }
     }
 
-    res.status(200).json({ message: `Document ${status}` });
+    return res.status(200).json({ message: `Document ${status}` });
   } catch (error) {
-    res.status(500).json({ message: "Error updating document status." });
+    console.error("Error updating document status:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
@@ -422,6 +440,9 @@ exports.uploadDocument = async (req, res) => {
     try {
       const { documentId, userId } = req.body;
 
+      console.log("Document ID:", documentId);
+      console.log("User ID:", userId);
+
       const document = await Document.findOne({
         where: { id: documentId, userId },
       });
@@ -431,17 +452,21 @@ exports.uploadDocument = async (req, res) => {
       }
 
       document.uploaded = true;
+      document.status = "uploaded";
       document.frontImage = frontImage;
       document.backImage = backImage;
-      await document.save();
+
+      const savedDocument = await document.save();
 
       res.status(200).json({
         message: "Files uploaded successfully",
-        frontImage: frontImage,
-        backImage: backImage,
-        documentId: document.id,
+        frontImage: savedDocument.frontImage,
+        backImage: savedDocument.backImage,
+        documentId: savedDocument.id,
+        status: savedDocument.status,
       });
     } catch (err) {
+      console.error("Error saving document:", err.message);
       res.status(500).json({
         message: "Error updating document paths in the database",
         error: err.message,
@@ -481,5 +506,70 @@ exports.getRequestedDocuments = async (req, res) => {
       error.message
     );
     res.status(500).json({ message: "Error fetching documents." });
+  }
+};
+exports.getUsersWithDocuments = async (req, res) => {
+  try {
+    console.log("Fetching users with documents...");
+
+    const usersWithDocuments = await User.findAll({
+      include: [
+        {
+          model: Document,
+          as: "documents",
+          attributes: ["id", "documentType", "status", "createdAt", "uploaded"],
+        },
+      ],
+      where: {
+        "$documents.userId$": { [Sequelize.Op.ne]: null },
+      },
+    });
+
+    if (!usersWithDocuments || usersWithDocuments.length === 0) {
+      console.log("No users with documents found.");
+      return res
+        .status(404)
+        .json({ message: "No users with documents found." });
+    }
+
+    res.status(200).json(usersWithDocuments);
+  } catch (error) {
+    console.error("Error fetching users with documents:", error.message);
+    res.status(500).json({ message: "Error fetching users with documents." });
+  }
+};
+
+exports.getUserDocuments = async (req, res) => {
+  const { userId } = req.params;
+  const { uploaded, status } = req.query;
+
+  try {
+    const whereConditions = { userId };
+    if (uploaded !== undefined) whereConditions.uploaded = uploaded;
+    if (status) whereConditions.status = status;
+
+    const userDocuments = await Document.findAll({
+      where: whereConditions,
+      order: [["createdAt", "DESC"]],
+      attributes: ["id", "frontImage", "backImage", "status", "documentType"],
+    });
+
+    if (!userDocuments || userDocuments.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No documents found for this user." });
+    }
+
+    const baseUrl = "http://localhost:3000"; 
+
+    userDocuments.forEach((doc) => {
+      doc.frontImage = new URL(doc.frontImage, baseUrl).toString();
+      doc.backImage = new URL(doc.backImage, baseUrl).toString();
+    });
+
+    res.status(200).json(userDocuments);
+  } catch (error) {
+    console.error("Error fetching user documents:", error.message);
+    res.status(500).json({ message: "Error fetching user documents." });
   }
 };

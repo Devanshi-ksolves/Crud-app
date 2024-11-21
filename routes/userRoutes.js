@@ -14,6 +14,8 @@ const {
   acceptRejectDocument,
   uploadDocument,
   getRequestedDocuments,
+  getUsersWithDocuments,
+  getUserDocuments,
 } = require("../controllers/userController");
 const authMiddleware = require("../middlewares/auth");
 const {
@@ -25,6 +27,12 @@ const { validateOtp } = require("../controllers/otpValidationController");
 const { resetPassword } = require("../controllers/updatePasswordController");
 const upload = require("../middlewares/upload");
 const router = express.Router();
+router.get(
+  "/users-with-documents",
+  authMiddleware,
+  authorizeUserOrAdmin,
+  getUsersWithDocuments
+);
 router.get("/requested-documents/:userId", getRequestedDocuments);
 
 router.post("/register", register);
@@ -77,6 +85,13 @@ router.post(
     { name: "backImage", maxCount: 1 },
   ]),
   uploadDocument
+);
+
+router.get(
+  "/user/:userId/documents",
+  authMiddleware,
+  authorizeUserOrAdmin,
+  getUserDocuments
 );
 
 module.exports = router;
