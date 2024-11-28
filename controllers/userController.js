@@ -1,6 +1,7 @@
-const { User, Document } = require("../models");
+const { User, Document, Notification } = require("../models");
 const { Op } = require("sequelize");
 const { Sequelize } = require("sequelize");
+const socket = require("../sockets/socket");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const { sendEmail } = require("../services/emailService");
@@ -341,13 +342,20 @@ exports.getUsersList = async (req, res) => {
 
 exports.requestDocument = async (req, res) => {
   const { userId, documentTypes } = req.body;
+  const adminUserId = req.user?.id;
 
   try {
     const user = await User.findByPk(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     for (const type of documentTypes) {
-      await Document.create({ userId, documentType: type });
+      await Document.create({
+        userId,
+        documentType: type,
+        adminUserId,
+      });
     }
 
     const documentList = documentTypes.map((type) => `- ${type}`).join("\n");
@@ -431,54 +439,87 @@ exports.acceptRejectDocument = async (req, res) => {
 };
 
 exports.uploadDocument = async (req, res) => {
-  if (req.files) {
-    const frontImage = req.files.frontImage
-      ? req.files.frontImage[0].path
-      : null;
-    const backImage = req.files.backImage ? req.files.backImage[0].path : null;
+  if (!req.files) {
+    return res.status(400).json({ message: "No files uploaded" });
+  }
 
-    try {
-      const { documentId, userId } = req.body;
+  const frontImage = req.files.frontImage ? req.files.frontImage[0].path : null;
+  const backImage = req.files.backImage ? req.files.backImage[0].path : null;
 
-      console.log("Document ID:", documentId);
-      console.log("User ID:", userId);
+  const { documentId, userId } = req.body;
 
-      const document = await Document.findOne({
-        where: { id: documentId, userId },
-      });
+  if (!documentId || !userId) {
+    return res
+      .status(400)
+      .json({ message: "Document ID and User ID are required" });
+  }
 
-      if (!document) {
-        return res.status(404).json({ message: "Document not found" });
-      }
+  try {
+    const document = await Document.findOne({
+      where: { id: documentId, userId },
+    });
 
-      document.uploaded = true;
-      document.status = "uploaded";
-      document.frontImage = frontImage;
-      document.backImage = backImage;
+    if (!document) {
+      return res.status(404).json({ message: "Document not found" });
+    }
 
-      const savedDocument = await document.save();
+    const user = await User.findByPk(userId);
 
-      res.status(200).json({
-        message: "Files uploaded successfully",
-        frontImage: savedDocument.frontImage,
-        backImage: savedDocument.backImage,
-        documentId: savedDocument.id,
-        status: savedDocument.status,
-      });
-    } catch (err) {
-      console.error("Error saving document:", err.message);
-      res.status(500).json({
-        message: "Error updating document paths in the database",
-        error: err.message,
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    document.uploaded = true;
+    document.status = "uploaded";
+    document.frontImage = frontImage;
+    document.backImage = backImage;
+
+    const savedDocument = await document.save();
+
+    const adminId = document.adminUserId;
+    const documentName = document.documentType;
+
+    const message = `User ${user.name} has uploaded ${documentName}.`;
+
+    const existingNotification = await Notification.findOne({
+      where: { id: user.id, seen: false },
+    });
+
+    if (existingNotification) {
+      existingNotification.message += `, ${documentName}`;
+      existingNotification.link = `/view-documents?userId=${userId}`;
+      await existingNotification.save();
+    } else {
+      await Notification.create({
+        adminId,
+        id: user.id,
+        message,
+        link: `/view-documents?userId=${userId}`,
+        seen: false,
       });
     }
-  } else {
-    res.status(400).json({ message: "No files uploaded" });
+
+    socket.notifyAdmin(adminId, message, `/view-documents?userId=${userId}`);
+
+    res.status(200).json({
+      message: "Files uploaded successfully",
+      frontImage: savedDocument.frontImage,
+      backImage: savedDocument.backImage,
+      documentId: savedDocument.id,
+      status: savedDocument.status,
+    });
+  } catch (err) {
+    console.error("Error saving document:", err.message);
+    res.status(500).json({
+      message: "Error updating document paths in the database",
+      error: err.message,
+    });
   }
 };
 
 exports.getRequestedDocuments = async (req, res) => {
   const { userId } = req.params;
+
   try {
     const latestDocument = await Document.findOne({
       where: { userId },
@@ -494,12 +535,28 @@ exports.getRequestedDocuments = async (req, res) => {
 
     const latestTimestamp = latestDocument.createdAt;
 
+    const fiveMinutesBefore = new Date(latestTimestamp);
+    fiveMinutesBefore.setMinutes(fiveMinutesBefore.getMinutes() - 5);
+
+    const fiveMinutesAfter = new Date(latestTimestamp);
+    fiveMinutesAfter.setMinutes(fiveMinutesAfter.getMinutes() + 5);
+
     const recentDocuments = await Document.findAll({
-      where: { userId, createdAt: latestTimestamp },
+      where: {
+        userId,
+        createdAt: {
+          [Op.gte]: fiveMinutesBefore,
+          [Op.lte]: fiveMinutesAfter,
+        },
+      },
       order: [["createdAt", "DESC"]],
     });
 
-    res.status(200).json(recentDocuments);
+    if (recentDocuments.length === 0) {
+      return res.status(404).json({ message: "No recent documents found." });
+    }
+
+    res.status(200).json(recentDocuments.map((doc) => doc.toJSON()));
   } catch (error) {
     console.error(
       "Error fetching the latest requested documents:",
@@ -508,9 +565,14 @@ exports.getRequestedDocuments = async (req, res) => {
     res.status(500).json({ message: "Error fetching documents." });
   }
 };
+
 exports.getUsersWithDocuments = async (req, res) => {
+  const adminUserId = req.user?.id;
+
   try {
-    console.log("Fetching users with documents...");
+    console.log(
+      "Fetching users with documents requested by the logged-in admin..."
+    );
 
     const usersWithDocuments = await User.findAll({
       include: [
@@ -518,18 +580,18 @@ exports.getUsersWithDocuments = async (req, res) => {
           model: Document,
           as: "documents",
           attributes: ["id", "documentType", "status", "createdAt", "uploaded"],
+          where: {
+            adminUserId,
+          },
         },
       ],
-      where: {
-        "$documents.userId$": { [Sequelize.Op.ne]: null },
-      },
     });
 
     if (!usersWithDocuments || usersWithDocuments.length === 0) {
-      console.log("No users with documents found.");
-      return res
-        .status(404)
-        .json({ message: "No users with documents found." });
+      console.log("No users with documents found for the logged-in admin.");
+      return res.status(404).json({
+        message: "No users with documents found for the logged-in admin.",
+      });
     }
 
     res.status(200).json(usersWithDocuments);
@@ -548,19 +610,25 @@ exports.getUserDocuments = async (req, res) => {
     if (uploaded !== undefined) whereConditions.uploaded = uploaded;
     if (status) whereConditions.status = status;
 
-    const userDocuments = await Document.findAll({
+    const latestDocument = await Document.findOne({
       where: whereConditions,
       order: [["createdAt", "DESC"]],
-      attributes: ["id", "frontImage", "backImage", "status", "documentType"],
+      attributes: ["createdAt"],
     });
-
-    if (!userDocuments || userDocuments.length === 0) {
+    if (!latestDocument) {
       return res
         .status(404)
         .json({ message: "No documents found for this user." });
     }
+    const latestTimestamp = latestDocument.createdAt;
 
-    const baseUrl = "http://localhost:3000"; 
+    const userDocuments = await Document.findAll({
+      where: { userId, createdAt: latestTimestamp },
+      order: [["createdAt", "DESC"]],
+      attributes: ["id", "frontImage", "backImage", "status", "documentType"],
+    });
+
+    const baseUrl = "http://localhost:3000";
 
     userDocuments.forEach((doc) => {
       doc.frontImage = new URL(doc.frontImage, baseUrl).toString();
@@ -571,5 +639,64 @@ exports.getUserDocuments = async (req, res) => {
   } catch (error) {
     console.error("Error fetching user documents:", error.message);
     res.status(500).json({ message: "Error fetching user documents." });
+  }
+};
+
+exports.getNotifications = async (req, res) => {
+  const { adminId } = req.params;
+
+  try {
+    const notifications = await Notification.findAll({
+      where: { adminId },
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.status(200).json(notifications);
+  } catch (err) {
+    console.error("Error fetching notifications:", err.message);
+    res.status(500).json({
+      message: "Error fetching notifications",
+      error: err.message,
+    });
+  }
+};
+
+exports.markNotificationsAsRead = async (req, res) => {
+  const { adminId } = req.params;
+  console.log("Received adminId:", adminId);
+
+  if (!adminId) {
+    return res.status(400).json({ message: "Admin ID is required" });
+  }
+
+  try {
+    console.log(`Fetching notifications for adminId: ${adminId}`);
+    const notifications = await Notification.findAll({
+      where: { adminId, seen: 0 },
+    });
+
+    console.log("Matching Notifications:", notifications);
+
+    if (notifications.length === 0) {
+      return res.status(404).json({ message: "No notifications to update" });
+    }
+
+    const [rowsUpdated] = await Notification.update(
+      { seen: 1 },
+      { where: { adminId, seen: 0 } }
+    );
+
+    if (rowsUpdated === 0) {
+      return res.status(404).json({ message: "No notifications to update" });
+    }
+
+    return res.status(200).json({ message: "Notifications marked as read" });
+  } catch (err) {
+    console.error("Error updating notifications:", err);
+
+    return res.status(500).json({
+      message: "Error updating notifications",
+      error: err.message,
+    });
   }
 };

@@ -15,10 +15,8 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
-    // Remove the 'uploaded' column in case of rollback
     await queryInterface.removeColumn("Documents", "uploaded");
 
-    // Remove the unique constraint if rolling back
     await queryInterface.removeConstraint("Documents", "id");
   },
 };

@@ -20,7 +20,8 @@
     "mysql": "^2.18.1",
     "mysql2": "^3.11.3",
     "nodemailer": "^6.9.15",
-    "sequelize": "^6.37.4"
+    "sequelize": "^6.37.4",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "sequelize-cli": "^6.6.2"

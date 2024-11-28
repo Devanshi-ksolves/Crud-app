@@ -19,6 +19,15 @@ module.exports = (sequelize, DataTypes) => {
         },
         onDelete: "CASCADE",
       },
+      adminUserId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+          model: "Users",
+          key: "id",
+        },
+        onDelete: "CASCADE",
+      },
       documentType: {
         type: DataTypes.ENUM(
           "aadhaar_card",

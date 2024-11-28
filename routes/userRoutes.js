@@ -16,6 +16,8 @@ const {
   getRequestedDocuments,
   getUsersWithDocuments,
   getUserDocuments,
+  getNotifications,
+  markNotificationsAsRead,
 } = require("../controllers/userController");
 const authMiddleware = require("../middlewares/auth");
 const {
@@ -27,6 +29,7 @@ const { validateOtp } = require("../controllers/otpValidationController");
 const { resetPassword } = require("../controllers/updatePasswordController");
 const upload = require("../middlewares/upload");
 const router = express.Router();
+
 router.get(
   "/users-with-documents",
   authMiddleware,
@@ -93,5 +96,14 @@ router.get(
   authorizeUserOrAdmin,
   getUserDocuments
 );
+
+router.get(
+  "/notifications/:adminId",
+  authMiddleware,
+  authorizeUserOrAdmin,
+  getNotifications
+);
+
+router.post("/:adminId/mark-as-read", markNotificationsAsRead);
 
 module.exports = router;
